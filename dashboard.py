@@ -10,7 +10,7 @@ st.caption("Nalepastraße 162 – Lagerräume mit Business-Center  \nwww.schimme
 # --- Drag & Drop Upload ---
 uploaded_file = st.file_uploader(
     "Dashboard-Datei hochladen",
-    type=["xlsx"],
+    type=["json"],
     accept_multiple_files=False,
     help="Ziehen Sie Ihre 'dashboard_summary.json' hierher oder klicken Sie zum Durchsuchen"
 )
@@ -20,7 +20,7 @@ if uploaded_file is not None:
     try:
         # Read file content as bytes and decode to string
         content = BytesIO(uploaded_file.getvalue()).read().decode('utf-8')
-        data = xlsx.loads(content)
+        data = json.loads(content)
         st.success("Daten erfolgreich geladen!")
     except Exception as e:
         st.error(f"Fehler beim Verarbeiten der Datei: {e}")
