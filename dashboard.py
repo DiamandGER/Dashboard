@@ -20,7 +20,7 @@ if uploaded_file is not None:
     try:
         # Read file content as bytes and decode to string
         content = BytesIO(uploaded_file.getvalue()).read().decode('utf-8')
-        data = json.loads(content)
+        data = xlsx.loads(content)
         st.success("Daten erfolgreich geladen!")
     except Exception as e:
         st.error(f"Fehler beim Verarbeiten der Datei: {e}")
