@@ -10,7 +10,7 @@ st.caption("Nalepastraße 162 – Lagerräume mit Business-Center  \nwww.schimme
 # --- Drag & Drop Upload ---
 uploaded_file = st.file_uploader(
     "Dashboard-Datei hochladen",
-    type=["json"],
+    type=["xlsx"],
     accept_multiple_files=False,
     help="Ziehen Sie Ihre 'dashboard_summary.json' hierher oder klicken Sie zum Durchsuchen"
 )
