@@ -6,12 +6,13 @@ import requests
 from io import BytesIO
 import uuid
 import time
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import threading
+import base64
 import gc
 
 # --- Konfiguration ---
-N8N_WEBHOOK_URL = "https://your-n8n-service.railway.app/process-data"  # Ihr n8n Endpunkt
+N8N_WEBHOOK_URL = st.secrets.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/process-data")
 DEFAULT_DATA = {
     "belegt": 0,
     "frei": 0,
@@ -30,37 +31,21 @@ DEFAULT_DATA = {
 @st.cache_resource
 def start_flask_app():
     app = Flask(__name__)
-
-@app.route('/webhook-result', methods=['POST'])
-def handle_result():
-    try:
-        # 1. Standard JSON-Verarbeitung
-        data = request.json
-
-        # 2. Falls ein Datei-Objekt enthalten ist:
-        if "file" in data:
-            file_data_base64 = data["file"]["data"]  # base64-encoded String
-            file_name = data["file"]["name"]
-
-            # Datei decodieren und speichern
-            file_bytes = base64.b64decode(file_data_base64)
-            with open(file_name, "wb") as f:
-                f.write(file_bytes)
-            # Optional: Datei direkt als JSON in Streamlit-Session laden
-            if file_name.endswith(".json"):
-                try:
-                    file_json = json.loads(file_bytes.decode("utf-8"))
-                    st.session_state.data = file_json
-                except Exception as e:
-                    print(f"Fehler beim Parsen der JSON-Datei: {e}")
-        else:
-            # Wenn KEINE Datei gesendet wurde, komplettes JSON an Streamlit
+    
+    @app.route('/webhook-result', methods=['POST'])
+    def handle_result():
+        try:
+            data = request.json
             st.session_state.data = data
-
-        return {"status": "success"}, 200
-    except Exception as e:
-        print(f"Webhook-Fehler: {str(e)}")
-        return {"status": "error"}, 500
+            return jsonify({"status": "success"}), 200
+        except Exception as e:
+            print(f"Webhook-Fehler: {str(e)}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+    
+    thread = threading.Thread(target=lambda: app.run(port=5000, host='0.0.0.0'))
+    thread.daemon = True
+    thread.start()
+    return app
 
 # --- Dashboard Initialisierung ---
 st.set_page_config(page_title="Self-Storage Dashboard", layout="wide")
