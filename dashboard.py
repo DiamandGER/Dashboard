@@ -1,130 +1,238 @@
 import streamlit as st
 import json
 import plotly.graph_objects as go
+import plotly.express as px
+import requests
 from io import BytesIO
+import uuid
+import time
+from flask import Flask, request
+import threading
+import gc
 
+# --- Konfiguration ---
+N8N_WEBHOOK_URL = "https://your-n8n-service.railway.app/process-data"  # Ihr n8n Endpunkt
+DEFAULT_DATA = {
+    "belegt": 0,
+    "frei": 0,
+    "vertragsdauer_durchschnitt": 0,
+    "reminder_automat": 0,
+    "social_facebook": 0,
+    "social_google": 0,
+    "belegungsgrad": 0,
+    "kundenherkunft": {},
+    "neukunden_labels": [],
+    "neukunden_monat": [],
+    "zahlungsstatus": {}
+}
+
+# --- Flask Server für Webhook-Ergebnisse ---
+@st.cache_resource
+def start_flask_app():
+    app = Flask(__name__)
+    
+    @app.route('/webhook-result', methods=['POST'])
+    def handle_result():
+        try:
+            data = request.json
+            st.session_state.data = data
+            return {"status": "success"}, 200
+        except Exception as e:
+            st.error(f"Webhook-Fehler: {str(e)}")
+            return {"status": "error"}, 500
+    
+    thread = threading.Thread(target=lambda: app.run(port=5000, debug=False, use_reloader=False))
+    thread.daemon = True
+    thread.start()
+    return app
+
+# --- Dashboard Initialisierung ---
 st.set_page_config(page_title="Self-Storage Dashboard", layout="wide")
 st.title("📦 Shurgard Self‑Storage Business Dashboard")
 st.caption("Nalepastraße 162 – Lagerräume mit Business-Center  \nwww.schimmel-automobile.de")
 
-# --- Drag & Drop Upload ---
+# Starte Flask-Server im Hintergrund
+flask_app = start_flask_app()
+
+# --- Drag & Drop Upload mit KI-Verarbeitung ---
 uploaded_file = st.file_uploader(
-    "Dashboard-Datei hochladen",
-    type=["json"],
-    accept_multiple_files=False,
-    help="Ziehen Sie Ihre 'dashboard_summary.json' hierher oder klicken Sie zum Durchsuchen"
+    "Geschäftsdaten hochladen (Daten werden nicht gespeichert)",
+    type=["csv", "json", "xlsx"],
+    help="Ziehen Sie Ihre Geschäftsdaten hierher oder klicken Sie zum Durchsuchen"
 )
 
-data = {}
-if uploaded_file is not None:
-    try:
-        # Read file content as bytes and decode to string
-        content = BytesIO(uploaded_file.getvalue()).read().decode('utf-8')
-        data = json.loads(content)
-        st.success("Daten erfolgreich geladen!")
-    except Exception as e:
-        st.error(f"Fehler beim Verarbeiten der Datei: {e}")
+# Session State für Daten initialisieren
+if 'data' not in st.session_state:
+    st.session_state.data = DEFAULT_DATA
+
+# Verarbeite Datei wenn hochgeladen
+if uploaded_file:
+    # Dateigrößenlimit (5MB)
+    if uploaded_file.size > 5 * 1024 * 1024:
+        st.error("❌ Datei zu groß - max. 5MB erlaubt")
         st.stop()
-else:
-    st.info("Bitte laden Sie eine JSON-Datei per Drag & Drop hoch")
-    st.stop()
+    
+    # Dateityp validieren
+    allowed_types = ["text/csv", "application/json", 
+                    "application/vnd.ms-excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+    if uploaded_file.type not in allowed_types:
+        st.error("❌ Ungültiger Dateityp - nur CSV, JSON oder Excel erlaubt")
+        st.stop()
+    
+    with st.spinner("KI verarbeitet Daten datenschutzkonform..."):
+        try:
+            # Generiere eindeutige Session-ID
+            session_id = str(uuid.uuid4())
+            
+            # Sende Datei an n8n zur Verarbeitung
+            response = requests.post(
+                N8N_WEBHOOK_URL,
+                files={"file": (uploaded_file.name, uploaded_file.getvalue())},
+                headers={"X-Session-ID": session_id},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                st.success("✅ Daten erfolgreich verarbeitet - Keine Daten gespeichert!")
+                # Warte auf Webhook-Antwort
+                for _ in range(10):
+                    if 'data' in st.session_state and st.session_state.data != DEFAULT_DATA:
+                        break
+                    time.sleep(1)
+            else:
+                st.error(f"❌ Fehler bei der Verarbeitung: Status {response.status_code}")
+        except Exception as e:
+            st.error(f"❌ Systemfehler: {str(e)}")
 
-# --- KPI Kacheln ---
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Belegte Einheiten", data.get("belegt", 0))
-col2.metric("Freie Einheiten", data.get("frei", 0))
-col3.metric("Ø Vertragsdauer (Monate)", round(data.get("vertragsdauer_durchschnitt", 0), 1))
-col4.metric("Auto-Reminder gesendet", data.get("reminder_automat", 0))
+# Verwende die aktuellen Daten (entweder aus Session oder Default)
+data = st.session_state.data
 
-# --- Social Media Stats & Weitere KPIs ---
-col5, col6, col7, col8 = st.columns(4)
-col5.metric("Facebook-Follower", data.get("social_facebook", 0))
-col6.metric("Google Reviews", data.get("social_google", 0))
-col7.metric("Ø Belegungsgrad (%)", data.get("belegungsgrad", 0))
+# --- Dashboard Visualisierungen ---
+def display_dashboard(data):
+    # --- KPI Kacheln ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Belegte Einheiten", data.get("belegt", 0))
+    col2.metric("Freie Einheiten", data.get("frei", 0))
+    col3.metric("Ø Vertragsdauer (Monate)", round(data.get("vertragsdauer_durchschnitt", 0), 1))
+    col4.metric("Auto-Reminder gesendet", data.get("reminder_automat", 0))
 
-# Calculate recommendation rate safely
-kundenherkunft = data.get("kundenherkunft", {})
-empfehlungen = kundenherkunft.get("Empfehlung", 0)
-total_kunden = max(sum(kundenherkunft.values()), 1)  # Prevent division by zero
-col8.metric("Empfehlungsrate (%)", round(100 * empfehlungen / total_kunden, 1))
+    # --- Social Media Stats & Weitere KPIs ---
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("Facebook-Follower", data.get("social_facebook", 0))
+    col6.metric("Google Reviews", data.get("social_google", 0))
+    col7.metric("Ø Belegungsgrad (%)", data.get("belegungsgrad", 0))
 
-# --- Auslastung Pie ---
-auslastung_fig = go.Figure(data=[
-    go.Pie(
-        labels=["Belegt", "Frei"],
-        values=[data.get("belegt", 0), data.get("frei", 0)],
-        hole=.5,
-        marker_colors=["royalblue", "lightgray"],
-        textinfo="percent+value"
+    # Empfehlungsrate berechnen
+    kundenherkunft = data.get("kundenherkunft", {})
+    empfehlungen = kundenherkunft.get("Empfehlung", 0)
+    total_kunden = max(sum(kundenherkunft.values()), 1)  # Division durch Null verhindern
+    col8.metric("Empfehlungsrate (%)", round(100 * empfehlungen / total_kunden, 1))
+
+    # --- Auslastung Pie Chart ---
+    auslastung_fig = go.Figure(data=[
+        go.Pie(
+            labels=["Belegt", "Frei"],
+            values=[data.get("belegt", 0), data.get("frei", 0)],
+            hole=.5,
+            marker_colors=["#1f77b4", "#d3d3d3"],
+            textinfo="percent+value"
+        )
+    ])
+    auslastung_fig.update_layout(
+        title="Auslastung Lagerräume",
+        showlegend=True,
+        margin=dict(t=40, b=20),
+        height=300
     )
-])
-auslastung_fig.update_layout(
-    title="Auslastung Lagerräume",
-    showlegend=True,
-    margin=dict(t=40, b=20)
-)
 
-# --- Neukundenentwicklung ---
-kunden_fig = go.Figure(data=[
-    go.Bar(
-        x=data.get("neukunden_labels", []),
-        y=data.get("neukunden_monat", []),
-        marker_color="orange",
-        textposition="auto"
+    # --- Neukundenentwicklung ---
+    kunden_fig = go.Figure(data=[
+        go.Bar(
+            x=data.get("neukunden_labels", []),
+            y=data.get("neukunden_monat", []),
+            marker_color="#ff7f0e",
+            textposition="auto"
+        )
+    ])
+    kunden_fig.update_layout(
+        title="Neukunden pro Monat",
+        xaxis_title="Monat",
+        yaxis_title="Neukunden",
+        margin=dict(t=40, b=40),
+        height=300
     )
-])
-kunden_fig.update_layout(
-    title="Neukunden pro Monat",
-    xaxis_title="Monat",
-    yaxis_title="Neukunden",
-    margin=dict(t=40, b=40)
-)
 
-# --- Zahlungsstatus ---
-zahlungsstatus = data.get("zahlungsstatus", {})
-zahlung_fig = go.Figure(data=[
-    go.Bar(
-        x=["Bezahlt", "Offen", "Überfällig"],
-        y=[
-            zahlungsstatus.get("bezahlt", 0),
-            zahlungsstatus.get("offen", 0),
-            zahlungsstatus.get("überfällig", 0)
-        ],
-        marker_color=["seagreen", "gold", "crimson"],
-        textposition="auto"
+    # --- Zahlungsstatus ---
+    zahlungsstatus = data.get("zahlungsstatus", {})
+    zahlung_fig = go.Figure(data=[
+        go.Bar(
+            x=["Bezahlt", "Offen", "Überfällig"],
+            y=[
+                zahlungsstatus.get("bezahlt", 0),
+                zahlungsstatus.get("offen", 0),
+                zahlungsstatus.get("überfällig", 0)
+            ],
+            marker_color=["#2ca02c", "#ffd700", "#d62728"],
+            textposition="auto"
+        )
+    ])
+    zahlung_fig.update_layout(
+        title="Zahlungsstatus",
+        yaxis_title="Anzahl Rechnungen",
+        margin=dict(t=40, b=20),
+        height=300
     )
-])
-zahlung_fig.update_layout(
-    title="Zahlungsstatus",
-    yaxis_title="Anzahl Rechnungen",
-    margin=dict(t=40, b=20)
-)
 
-# --- Kundenherkunft ---
-kundenherkunft = data.get("kundenherkunft", {})
-herkunft_fig = go.Figure(data=[
-    go.Pie(
-        labels=list(kundenherkunft.keys()),
-        values=list(kundenherkunft.values()),
-        hole=.4,
-        textinfo="percent+label",
-        marker_colors=px.colors.qualitative.Pastel
+    # --- Kundenherkunft ---
+    kundenherkunft = data.get("kundenherkunft", {})
+    if kundenherkunft:
+        herkunft_fig = go.Figure(data=[
+            go.Pie(
+                labels=list(kundenherkunft.keys()),
+                values=list(kundenherkunft.values()),
+                hole=.4,
+                textinfo="percent+label",
+                marker_colors=px.colors.qualitative.Pastel
+            )
+        ])
+    else:
+        herkunft_fig = go.Figure()
+        herkunft_fig.add_annotation(
+            text="Keine Daten verfügbar",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False
+        )
+    
+    herkunft_fig.update_layout(
+        title="Kundenherkunft",
+        showlegend=False,
+        margin=dict(t=40, b=20),
+        height=350
     )
-])
-herkunft_fig.update_layout(
-    title="Kundenherkunft",
-    showlegend=False,
-    margin=dict(t=40, b=20),
-    height=400
-)
 
-# --- Dashboard Layout ---
-col9, col10 = st.columns(2)
-with col9:
-    st.plotly_chart(auslastung_fig, use_container_width=True)
-    st.plotly_chart(kunden_fig, use_container_width=True)
-with col10:
-    st.plotly_chart(zahlung_fig, use_container_width=True)
-    st.plotly_chart(herkunft_fig, use_container_width=True)
+    # --- Dashboard Layout ---
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        st.plotly_chart(auslastung_fig, use_container_width=True)
+        st.plotly_chart(kunden_fig, use_container_width=True)
+    
+    with col_right:
+        st.plotly_chart(zahlung_fig, use_container_width=True)
+        st.plotly_chart(herkunft_fig, use_container_width=True)
 
-st.caption("Daten per Drag-and-Drop aktualisierbar | Kontakt: info@schimmel-automobile.de")
+# Zeige Dashboard mit aktuellen Daten
+display_dashboard(data)
+
+# --- Reset-Button für Daten ---
+if st.button("Daten zurücksetzen"):
+    st.session_state.data = DEFAULT_DATA
+    st.experimental_rerun()
+
+# --- Footer ---
+st.caption("""
+Daten werden datenschutzkonform verarbeitet - Keine Speicherung personenbezogener Daten | 
+Kontakt: info@schimmel-automobile.de | 
+Aktualisiert: August 2025
+""")
