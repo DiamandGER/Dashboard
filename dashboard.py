@@ -86,6 +86,16 @@ if uploaded_file:
             # Generiere eindeutige Session-ID
             session_id = str(uuid.uuid4())
             
+    # Deine n8n-Webhook-URL hier eintragen:
+    N8N_WEBHOOK_URL = "https://DEINE-N8N-URL/webhook/DEIN-WEBHOOK"
+
+    DEFAULT_DATA = None  # Passe das ggf. an
+    session_id = st.session_state.get("session_id", "dein_default_session_id")  # falls benötigt
+
+    uploaded_file = st.file_uploader("Drag and drop file here (JSON)")
+
+    if uploaded_file is not None:
+        try:
             # Sende Datei an n8n zur Verarbeitung
             response = requests.post(
                 N8N_WEBHOOK_URL,
@@ -93,10 +103,10 @@ if uploaded_file:
                 headers={"X-Session-ID": session_id},
                 timeout=30
             )
-            
+
             if response.status_code == 200:
                 st.success("✅ Daten erfolgreich verarbeitet - Keine Daten gespeichert!")
-                # Warte auf Webhook-Antwort
+            # Warte auf Webhook-Antwort (optional, falls der Webhook asynchron arbeitet)
                 for _ in range(10):
                     if 'data' in st.session_state and st.session_state.data != DEFAULT_DATA:
                         break
