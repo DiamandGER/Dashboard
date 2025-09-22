@@ -1,7 +1,6 @@
 streamlit
+flask
 plotly
 requests
-flask
 pandas
-numpy
-gunicorn
+openpyxl
