@@ -10,9 +10,10 @@ from flask import Flask, request, jsonify
 import threading
 import base64
 import gc
+import os
 
 # --- Konfiguration ---
-N8N_WEBHOOK_URL = st.secrets.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/process-data")
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/process-data")
 DEFAULT_DATA = {
     "belegt": 0,
     "frei": 0,
@@ -42,7 +43,9 @@ def start_flask_app():
             print(f"Webhook-Fehler: {str(e)}")
             return jsonify({"status": "error", "message": str(e)}), 500
     
-    thread = threading.Thread(target=lambda: app.run(port=5000, host='0.0.0.0'))
+    # Port für Flask aus Environment Variable, sonst 5000
+    port = int(os.environ.get("FLASK_PORT", 5000))
+    thread = threading.Thread(target=lambda: app.run(port=port, host='0.0.0.0'))
     thread.daemon = True
     thread.start()
     return app
@@ -86,16 +89,6 @@ if uploaded_file:
             # Generiere eindeutige Session-ID
             session_id = str(uuid.uuid4())
             
-    # Deine n8n-Webhook-URL hier eintragen:
-    N8N_WEBHOOK_URL = "https://DEINE-N8N-URL/webhook/DEIN-WEBHOOK"
-
-    DEFAULT_DATA = None  # Passe das ggf. an
-    session_id = st.session_state.get("session_id", "dein_default_session_id")  # falls benötigt
-
-    uploaded_file = st.file_uploader("Drag and drop file here (JSON)")
-
-    if uploaded_file is not None:
-        try:
             # Sende Datei an n8n zur Verarbeitung
             response = requests.post(
                 N8N_WEBHOOK_URL,
@@ -106,7 +99,7 @@ if uploaded_file:
 
             if response.status_code == 200:
                 st.success("✅ Daten erfolgreich verarbeitet - Keine Daten gespeichert!")
-            # Warte auf Webhook-Antwort (optional, falls der Webhook asynchron arbeitet)
+                # Warte auf Webhook-Antwort (optional, falls der Webhook asynchron arbeitet)
                 for _ in range(10):
                     if 'data' in st.session_state and st.session_state.data != DEFAULT_DATA:
                         break
