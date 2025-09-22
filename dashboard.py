@@ -1,19 +1,14 @@
 import streamlit as st
-import json
-import plotly.graph_objects as go
-import plotly.express as px
 import requests
-from io import BytesIO
 import uuid
 import time
-from flask import Flask, request, jsonify
-import threading
-import base64
-import gc
 import os
+from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
 
-# --- Konfiguration ---
-N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/process-data")
+# Konfiguration
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/webhook/business-data")
 DEFAULT_DATA = {
     "belegt": 0,
     "frei": 0,
@@ -28,46 +23,21 @@ DEFAULT_DATA = {
     "zahlungsstatus": {}
 }
 
-# --- Flask Server für Webhook-Ergebnisse ---
-@st.cache_resource
-def start_flask_app():
-    app = Flask(__name__)
-    
-    @app.route('/webhook-result', methods=['POST'])
-    def handle_result():
-        try:
-            data = request.json
-            st.session_state.data = data
-            return jsonify({"status": "success"}), 200
-        except Exception as e:
-            print(f"Webhook-Fehler: {str(e)}")
-            return jsonify({"status": "error", "message": str(e)}), 500
-    
-    # Port für Flask aus Environment Variable, sonst 5000
-    port = int(os.environ.get("FLASK_PORT", 5000))
-    thread = threading.Thread(target=lambda: app.run(port=port, host='0.0.0.0'))
-    thread.daemon = True
-    thread.start()
-    return app
-
-# --- Dashboard Initialisierung ---
+# Dashboard Initialisierung
 st.set_page_config(page_title="Self-Storage Dashboard", layout="wide")
 st.title("📦 Shurgard Self‑Storage Business Dashboard")
 st.caption("Nalepastraße 162 – Lagerräume mit Business-Center  \nwww.schimmel-automobile.de")
 
-# Starte Flask-Server im Hintergrund
-flask_app = start_flask_app()
+# Session State für Daten initialisieren
+if 'data' not in st.session_state:
+    st.session_state.data = DEFAULT_DATA
 
-# --- Drag & Drop Upload mit KI-Verarbeitung ---
+# Drag & Drop Upload mit KI-Verarbeitung
 uploaded_file = st.file_uploader(
     "Geschäftsdaten hochladen (Daten werden nicht gespeichert)",
     type=["csv", "json", "xlsx"],
     help="Ziehen Sie Ihre Geschäftsdaten hierher oder klicken Sie zum Durchsuchen"
 )
-
-# Session State für Daten initialisieren
-if 'data' not in st.session_state:
-    st.session_state.data = DEFAULT_DATA
 
 # Verarbeite Datei wenn hochgeladen
 if uploaded_file:
@@ -98,12 +68,8 @@ if uploaded_file:
             )
 
             if response.status_code == 200:
+                st.session_state.data = response.json()
                 st.success("✅ Daten erfolgreich verarbeitet - Keine Daten gespeichert!")
-                # Warte auf Webhook-Antwort (optional, falls der Webhook asynchron arbeitet)
-                for _ in range(10):
-                    if 'data' in st.session_state and st.session_state.data != DEFAULT_DATA:
-                        break
-                    time.sleep(1)
             else:
                 st.error(f"❌ Fehler bei der Verarbeitung: Status {response.status_code}")
         except Exception as e:
@@ -232,11 +198,11 @@ display_dashboard(data)
 # --- Reset-Button für Daten ---
 if st.button("Daten zurücksetzen"):
     st.session_state.data = DEFAULT_DATA
-    st.experimental_rerun()
+    st.rerun()
 
 # --- Footer ---
-st.caption("""
+st.caption(f"""
 Daten werden datenschutzkonform verarbeitet - Keine Speicherung personenbezogener Daten | 
 Kontakt: info@schimmel-automobile.de | 
-Aktualisiert: August 2025
+Aktualisiert: {datetime.now().strftime('%B %Y')}
 """)
